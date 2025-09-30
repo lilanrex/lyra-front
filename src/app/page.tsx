@@ -1,103 +1,200 @@
-import Image from "next/image";
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { Bot, ArrowRight } from 'lucide-react';
+import WalletConnection from './components/connectWallet';
+import { useRouter } from 'next/navigation';
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [isMounted, setIsMounted] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  
+  const wallet = useWallet();
+  const { publicKey, connected } = wallet;
+  const router = useRouter();
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (connected && publicKey && !isProcessing) {
+      // Add a small delay to ensure wallet is fully connected before signing
+      const timer = setTimeout(() => {
+        handleAutoSign();
+      }, 500);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [connected, publicKey]);
+
+  const handleWalletConnected = (walletAddress: string) => {
+    console.log('Wallet connected:', walletAddress);
+  };
+
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+  const handleAutoSign = async () => {
+    if (!publicKey || isProcessing) {
+      console.error("Public key is null or already processing. Cannot proceed.");
+      return;
+    }
+
+    setIsProcessing(true);
+    const walletAddress = publicKey.toBase58();
+    console.log("Starting auto-sign for wallet:", walletAddress);
+
+    let nonce = null;
+    try {
+      console.log("Starting auto-sign challenge...");
+      
+      // 1. Get the nonce from the backend
+      const challengeResp = await fetch(`${API_URL}/api/auth/challenge`, {
+        method: "POST",
+        body: JSON.stringify({ wallet: walletAddress }),
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!challengeResp.ok) throw new Error('Failed to get challenge');
+      
+      const data = await challengeResp.json();
+      nonce = data.nonce;
+
+      // 2. Sign the message
+      if (!wallet.signMessage) {
+        throw new Error('Wallet does not support the signMessage function.');
+      }
+      
+      const encodedMessage = new TextEncoder().encode(nonce);
+      
+      // Add error handling for user rejection
+      let signature;
+      try {
+        signature = await wallet.signMessage(encodedMessage);
+      } catch (signError: any) {
+        if (signError.message?.includes('User rejected') || signError.name === 'WalletSignMessageError') {
+          console.log('User rejected signature request');
+          setIsProcessing(false);
+          // Optionally disconnect the wallet
+          await wallet.disconnect();
+          return;
+        }
+        throw signError;
+      }
+      
+      console.log("Message signed successfully");
+
+      // 3. Send signature back to the backend
+      const base64Signature = btoa(String.fromCharCode(...signature));
+
+      const verifyResp = await fetch(`${API_URL}/api/auth/verify`, {
+        method: "POST",
+        body: JSON.stringify({
+          wallet: walletAddress,
+          signature: base64Signature,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+      
+      if (!verifyResp.ok) throw new Error('Failed to verify signature');
+      const { token } = await verifyResp.json();
+
+      // 4. Store token and navigate
+      localStorage.setItem("lyra_token", token);
+      console.log("✅ Auto-sign enabled, token saved. Navigating to chat...");
+      router.push('/chat');
+
+    } catch (error) {
+      console.error("Auto-sign process failed:", error);
+      setIsProcessing(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-black via-gray-900/40 to-black text-white font-mono">
+      {/* Navigation */}
+      <nav className="border-b border-purple-700/20 bg-black/70 backdrop-blur-xl">
+        <div className="max-w-6xl mx-auto px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <div className="w-10 h-10 bg-gradient-to-r from-green-600 to-cyan-400 rounded-full flex items-center justify-center shadow-lg shadow-purple-500/25">
+                  <Bot className="w-5 h-5 text-black" />
+                </div>
+                <div className="absolute -top-1 -right-1 w-4 h-4 bg-green-300 rounded-full border-2 border-black animate-pulse shadow-sm shadow-green-300/50"></div>
+              </div>
+              <div>
+                <h1 className="text-xl font-bold bg-gradient-to-r from-purple-300 to-cyan-300 bg-clip-text text-transparent tracking-wide">
+                  LyraAI
+                </h1>
+                <p className="text-xs text-gray-500 font-light">Your AI Financial Assistant</p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-4">
+            {connected && publicKey ? (
+              <div className="text-sm text-green-400 font-light">
+                {isProcessing ? 'Signing in...' : `Connected: ${publicKey.toBase58().slice(0, 6)}...${publicKey.toBase58().slice(-4)}`}
+              </div>
+            ) : null}
+            </div>
+          </div>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      </nav>
+
+      {/* Hero Section */}
+      <div className="relative overflow-hidden">
+        <div className="max-w-6xl mx-auto px-6 py-20">
+          <div className="text-center space-y-8">
+            <div className="space-y-4">
+              <h1 className="text-5xl md:text-7xl font-bold tracking-tight">
+                <span className="bg-gradient-to-r from-purple-300 via-cyan-300 to-green-300 bg-clip-text text-transparent">
+                  Meet LyraAI
+                </span>
+              </h1>
+              <p className="text-xl md:text-2xl text-gray-300 font-light max-w-3xl mx-auto leading-relaxed">
+                LyraAI is your Web3-native financial AI agent: it tracks wallet expenses in real-time, helps you budget with AI, and automatically saves or invests your surplus safely on-chain
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-6 pt-8">
+              <WalletConnection onWalletConnected={handleWalletConnected} />
+              
+              {isProcessing && (
+                <div className="flex items-center gap-2 text-purple-300">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-400"></div>
+                  <span className="text-sm font-light">Setting up your AI agent...</span>
+                </div>
+              )}
+            </div>
+
+            {!connected && (
+            <p className="text-sm text-gray-500 font-light">
+              Connect your wallet to unlock LyraAI
+            </p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="border-t border-gray-700/30 bg-black/70 backdrop-blur-xl">
+        <div className="max-w-6xl mx-auto px-6 py-8">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 bg-gradient-to-r from-green-600 to-cyan-400 rounded-full flex items-center justify-center">
+                <Bot className="w-4 h-4 text-black" />
+              </div>
+              <span className="text-sm text-gray-400 font-light">
+                LyraAI is powered by advanced AI. Always verify financial advice and do your own research.
+              </span>
+            </div>
+            
+            <div className="text-xs text-gray-600 font-mono opacity-60">
+              Built on Solana • Secured by blockchain
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
