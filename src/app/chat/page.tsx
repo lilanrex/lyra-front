@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -757,7 +758,6 @@ const handleNameSubmit = async (name: string, email: string) => {
     return (
       // Your existing JSX
       <>
-      <Suspense>
         {showNameModal && user && (
             <NameInputModal 
                 onSubmit={handleNameSubmit} 
@@ -905,6 +905,5 @@ const handleNameSubmit = async (name: string, email: string) => {
           </div>
         </div>
       )}
-      </Suspense>
       </>
     );}
