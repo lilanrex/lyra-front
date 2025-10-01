@@ -10,6 +10,7 @@ import { useSocket } from '../context/socketContext';
 import { Transaction, VersionedTransaction } from '@solana/web3.js';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { WalletSendTransactionError } from '@solana/wallet-adapter-base';
+import { Suspense } from 'react';
 
 // Define the AppUser type
 interface AppUser {
@@ -756,6 +757,7 @@ const handleNameSubmit = async (name: string, email: string) => {
     return (
       // Your existing JSX
       <>
+      <Suspense>
         {showNameModal && user && (
             <NameInputModal 
                 onSubmit={handleNameSubmit} 
@@ -903,5 +905,6 @@ const handleNameSubmit = async (name: string, email: string) => {
           </div>
         </div>
       )}
+      </Suspense>
       </>
     );}
